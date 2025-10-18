@@ -1,45 +1,90 @@
 const Koa = require('koa');
-const bodyParser = require('koa-bodyparser'); // 解析请求体
-const static = require('koa-static'); // 托管静态文件
-const cors = require('koa2-cors'); // 处理跨域
+const bodyParser = require('koa-bodyparser');
+const static = require('koa-static');
+const cors = require('koa2-cors');
+const views = require('koa-views');
 const path = require('path');
-require('dotenv').config(); // 加载环境变量
+require('dotenv').config();
 
-// 导入路由
 const userRouter = require('./routes/user');
-
-// 创建Koa应用
 const app = new Koa();
 const PORT = process.env.APP_PORT || 3000;
 
-// 1. 跨域配置（允许前端访问）
+// 1. 跨域配置
 app.use(cors({
-  origin: '*', // 开发环境允许所有来源（生产环境需指定具体域名）
-  allowMethods: ['GET', 'POST', 'PUT', 'DELETE'], // 允许的HTTP方法
-  allowHeaders: ['Content-Type'] // 允许的请求头
+  origin: '*',
+  allowMethods: ['GET', 'POST', 'PUT', 'DELETE'],
+  allowHeaders: ['Content-Type']
 }));
 
-// 2. 静态文件托管（前端HTML页面）
-const staticDir = path.join(__dirname, 'static'); // 静态文件目录
-app.use(static(staticDir));
+// 2. 模板引擎配置
+app.use(views(path.join(__dirname, 'views'), {
+  extension: 'ejs',
+  options: { siteName: 'My Koa App' }
+}));
 
-// 3. 解析请求体（必须在路由之前）
+// 3. 静态文件托管（可选，注释也不影响）
+// const staticDir = path.join(__dirname, 'static');
+// app.use(static(staticDir));
+
+// 4. 解析请求体
 app.use(bodyParser());
 
-// 4. 注册路由
-app.use(userRouter.routes());
-app.use(userRouter.allowedMethods()); // 处理405（方法不允许）和501（未实现）错误
+// 🌟 关键调整：把 SSR 页面路由移到 API 路由之前！
+// 6. 服务端渲染页面路由（先处理页面路径）
+app.use(async (ctx, next) => {
+  if (ctx.path === '/' || ctx.path.startsWith('/page/')) {
+    console.log(`📄 尝试渲染页面: ${ctx.path}`);
 
-// 5. 全局错误处理中间件
+    try {
+      if (ctx.path === '/') {
+        console.log('🔄 开始渲染首页...');
+        // 渲染首页时添加 currentTime 数据
+        await ctx.render('index', {
+          title: '首页 - Koa SSR示例',
+          message: '这是通过服务端渲染的首页',
+          userList: ['用户A', '用户B', '用户C'],
+         currentTime: new Date().toLocaleString('zh-CN')// 补充当前时间变量
+        });
+        console.log('✅ 首页渲染成功');
+        return;
+      } else if (ctx.path === '/page/user') {
+        console.log('🔄 开始渲染用户页...');
+        await ctx.render('user', {
+          title: '用户中心',
+          username: '访客'
+        });
+        console.log('✅ 用户页渲染成功');
+        return;
+      }
+    } catch (error) {
+      console.error('❌ 页面渲染失败:', error);
+      console.error('错误堆栈:', error.stack);
+      ctx.status = 500;
+      ctx.body = {
+        code: 500,
+        message: '页面渲染失败',
+        error: error.message // 开发环境下显示具体错误
+      };
+      return;
+    }
+  }
+
+  await next();
+});
+
+// 5. API路由（后处理接口路径）
+app.use(userRouter.routes());
+app.use(userRouter.allowedMethods());
+
+// 7. 全局错误处理中间件
 app.use(async (ctx, next) => {
   try {
-    await next(); // 执行后续中间件
-    // 处理404
+    await next();
     if (ctx.status === 404) {
       ctx.body = { code: 404, message: '接口不存在' };
     }
   } catch (error) {
-    // 捕获所有异常
     ctx.status = error.status || 500;
     ctx.body = {
       code: ctx.status,
@@ -48,10 +93,8 @@ app.use(async (ctx, next) => {
   }
 });
 
-// 启动服务
 app.listen(PORT, () => {
   console.log(`🚀 服务器已启动：http://localhost:${PORT}`);
-  console.log(`📱 前端页面：http://localhost:${PORT}`);
+  console.log(`🌐 SSR页面：http://localhost:${PORT} (首页)、http://localhost:${PORT}/page/user (用户页)`);
   console.log(`🔌 API接口：http://localhost:${PORT}/users`);
 });
-    
